@@ -4,3 +4,5 @@ httpx
 pydantic-settings
 pytest
 pymupdf
+python-multipart
+faiss-cpu==1.16.0
