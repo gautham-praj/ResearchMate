@@ -6,15 +6,14 @@ from app.services.vector_store_service import search_vectors
 from app.services.ollama_service import generate_answer
 
 
-def build_rag_prompt(
-    question: str,
-    retrieved_chunks: list[dict]
-) -> str:
+# Initial threshold based on the measured similarity scores.
+MIN_RELEVANCE_SCORE = 0.50
 
+
+def build_rag_prompt(question: str, retrieved_chunks: list[dict]) -> str:
     context_parts = []
 
     for result in retrieved_chunks:
-
         chunk = result["chunk"]
 
         context_parts.append(
@@ -56,15 +55,11 @@ async def answer_document_question(
     top_k: int = 5
 ) -> dict:
 
-    # 1. Generate an embedding for the user's question.
     question_vectors = await generate_embeddings([question])
 
     if len(question_vectors) != 1:
-        raise ValueError(
-            "Expected exactly one embedding for the question."
-        )
+        raise ValueError("Expected exactly one embedding for the question.")
 
-    # 2. Retrieve the most relevant document chunks.
     document_store = vector_store_dir / document_id
 
     retrieved_chunks = search_vectors(
@@ -73,27 +68,26 @@ async def answer_document_question(
         top_k=top_k
     )
 
-    # 3. Handle cases where no relevant chunks are available.
-    if not retrieved_chunks:
+    # Keep only passages whose similarity meets the relevance threshold.
+    relevant_chunks = [
+        result
+        for result in retrieved_chunks
+        if result["score"] >= MIN_RELEVANCE_SCORE
+    ]
+
+    if not relevant_chunks:
         return {
-            "answer": "I couldn't find relevant information in this document.",
+            "answer": "I couldn't find relevant information in this document to answer your question.",
             "sources": []
         }
 
-    # 4. Build a prompt using the retrieved document context.
-    prompt = build_rag_prompt(
-        question,
-        retrieved_chunks
-    )
+    prompt = build_rag_prompt(question, relevant_chunks)
 
-    # 5. Ask the local Qwen model to generate an answer.
     answer = await generate_answer(prompt)
 
-    # 6. Prepare source references for the API response.
     sources = []
 
-    for result in retrieved_chunks:
-
+    for result in relevant_chunks:
         chunk = result["chunk"]
 
         sources.append({
